@@ -46,20 +46,20 @@ async def test_permit_joining(bzsp_instance):
         assert status == Status.SUCCESS
 
 
-# @pytest.mark.asyncio
-# async def test_send_aps_data(bzsp_instance):
-#     async for bzsp in bzsp_instance:
-#         status = await bzsp.form_network(ext_pan_id=t.uint64_t(0x1234567890abcdef), pan_id=t.uint16_t(0x1234), channel=t.uint8_t(15))
-#         aps_frame = BzspApsFrameHeader(
-#             msg_type=0x00,
-#             dst_short_addr=0x5678,
-#             profile_id=0x0104,
-#             cluster_id=0x0006,
-#             src_ep=1,
-#             dst_ep=1
-#         )
-#         status = await bzsp.send_aps_data(aps_frame, asdu=b'\x01\x02\x03')
-#         assert status == Status.SUCCESS
+@pytest.mark.asyncio
+async def test_send_aps_data(bzsp_instance):
+    async for bzsp in bzsp_instance:
+        status = await bzsp.form_network(ext_pan_id=t.uint64_t(0x1234567890abcdef), pan_id=t.uint16_t(0x1234), channel=t.uint8_t(15))
+        aps_frame = BzspApsFrameHeader(
+            msg_type=0x00,
+            dst_short_addr=0x5678,
+            profile_id=0x0104,
+            cluster_id=0x0006,
+            src_ep=1,
+            dst_ep=1
+        )
+        status = await bzsp.send_aps_data(aps_frame, asdu=b'\x01\x02\x03')
+        assert status == Status.SUCCESS
 
 
 @pytest.mark.asyncio
@@ -164,73 +164,6 @@ async def test_get_app_version(bzsp_instance):
         assert isinstance(app_version, str)
 
 
-import asyncio
-import pytest
-from whisper.api import Bzsp
-from whisper.bzsp.types import BzspApsFrameHeader, LinkKey, Status
-from zigpy.config import CONF_DEVICE_PATH
-import zigpy.config
-import zigpy.types as t
-import logging
-
-@pytest.fixture
-async def bzsp_instance():
-    device_config = {
-        zigpy.config.CONF_DEVICE: {
-            zigpy.config.CONF_DEVICE_PATH: "COM20",
-            zigpy.config.CONF_DEVICE_BAUDRATE: 2000000,
-        }
-    }
-    app = ControllerApplication(device_config)
-    bzsp = Bzsp(app, device_config[zigpy.config.CONF_DEVICE])
-    await bzsp.connect()
-    yield bzsp
-    await asyncio.sleep(12)
-    bzsp.close()
-
-@pytest.mark.asyncio
-async def test_get_value(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        value = await bzsp.get_value(t.uint8_t(0x00))  # Example: get BZSP version
-        assert value is not None
-
-@pytest.mark.asyncio
-async def test_set_value(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        status = await bzsp.set_value(t.uint8_t(0x20), b'\x01\x02\x03\x04')  # Example: set MAC address
-        assert status == Status.SUCCESS
-
-@pytest.mark.asyncio
-async def test_set_link_key(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        link_key = LinkKey(ieee=t.uint64_t(0x1234567890abcdef), key=b'\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10')
-        status = await bzsp.set_link_key(link_key)
-        assert status == Status.SUCCESS
-
-@pytest.mark.asyncio
-async def test_get_global_tc_link_key(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        link_key_info = await bzsp.get_global_tc_link_key()
-        assert link_key_info["link_key"] is not None
-
-@pytest.mark.asyncio
-async def test_set_global_tc_link_key(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        status = await bzsp.set_global_tc_link_key(b'\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10', t.uint32_t(0))
-        assert status == Status.SUCCESS
-
-@pytest.mark.asyncio
-async def test_get_unique_tc_link_key(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        link_key_info = await bzsp.get_unique_tc_link_key(t.uint16_t(0))
-        assert link_key_info["link_key"] is not None
-
-@pytest.mark.asyncio
-async def test_set_unique_tc_link_key(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        status = await bzsp.set_unique_tc_link_key(t.uint64_t(0x1234567890abcdef), b'\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10')
-        assert status == Status.SUCCESS
-
 @pytest.mark.asyncio
 async def test_add_endpoint(bzsp_instance):
     async for bzsp in bzsp_instance:
@@ -248,40 +181,6 @@ async def test_get_network_security_infos(bzsp_instance):
     async for bzsp in bzsp_instance:
         security_info = await bzsp.get_network_security_infos()
         assert security_info["nwk_key"] is not None
-
-@pytest.mark.asyncio
-async def test_set_network_security_infos(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        status = await bzsp.set_network_security_infos(b'\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10', t.uint32_t(0), t.uint8_t(0))
-        assert status == Status.SUCCESS
-
-@pytest.mark.asyncio
-async def test_send_aps_data(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        aps_frame = BzspApsFrameHeader(
-            msg_type=0x01,
-            dst_short_addr=t.uint16_t(0x5678),
-            profile_id=t.uint16_t(0x0104),
-            cluster_id=t.uint16_t(0x0006),
-            src_ep=t.uint8_t(1),
-            dst_ep=t.uint8_t(1),
-            tx_options=0x01,
-            radius=t.uint8_t(0)
-        )
-        status = await bzsp.send_aps_data(aps_frame, asdu=b'\x01\x02\x03')
-        assert status == Status.SUCCESS
-
-@pytest.mark.asyncio
-async def test_aps_data_confirm(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        confirmation = await bzsp.aps_data_confirm()
-        assert confirmation["status"] == Status.SUCCESS
-
-@pytest.mark.asyncio
-async def test_aps_data_indication(bzsp_instance):
-    async for bzsp in bzsp_instance:
-        indication = await bzsp.aps_data_indication()
-        assert indication["asdu"] is not None
 
 
 if __name__ == "__main__":

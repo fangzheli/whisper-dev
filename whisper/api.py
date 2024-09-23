@@ -164,6 +164,11 @@ class Bzsp:
         """Form a Zigbee network."""
         rsp = await self.send_frame(FrameId.FORM_NETWORK, ext_pan_id=ext_pan_id, pan_id=pan_id, channel=channel)
         return rsp.get("status", Status.FAILURE)
+    
+    async def leave_network(self) -> Status:
+        """Leave a Zigbee network."""
+        rsp = await self.send_frame(FrameId.LEAVE_NETWORK)
+        return rsp.get("status", Status.FAILURE)
 
     async def permit_joining(self, duration: t.uint8_t = t.uint64_t(60)) -> Status:
         """Permit devices to join the network."""
@@ -288,55 +293,10 @@ class Bzsp:
         )
         return rsp["status"]
 
-
-    async def aps_data_confirm(self) -> t.Dict[str, Any]:
-        """Confirm APS data delivery."""
-        rsp = await self.send_frame(FrameId.APS_DATA_CONFIRM)
-        return {
-            "status": rsp["status"],
-            "dst_addr": rsp["dst_short_addr"],
-            "profile_id": rsp["profile_id"],
-            "cluster_id": rsp["cluster_id"],
-            "src_ep": rsp["src_ep"],
-            "dst_ep": rsp["dst_ep"],
-            "message_tag": rsp["message_tag"]
-        }
-    
-    async def aps_data_indication(self) -> t.Dict[str, Any]:
-        """Handle APS data indication from NCP."""
-        rsp = await self.send_frame(FrameId.APS_DATA_INDICATION)
-        return {
-            "profile_id": rsp["profile_id"],
-            "cluster_id": rsp["cluster_id"],
-            "src_short_addr": rsp["src_short_addr"],
-            "dst_short_addr": rsp["dst_short_addr"],
-            "src_ep": rsp["src_ep"],
-            "dst_ep": rsp["dst_ep"],
-            "msg_type": rsp["msg_type"],
-            "lqi": rsp["lqi"],
-            "rssi": rsp["rssi"],
-            "asdu": rsp["asdu"]
-    }
-
     async def get_security_infos(self) -> t.Dict[str, Any]:
         """Retrieve network security information."""
         rsp = await self.send_frame(FrameId.GET_NWK_SECURITY_INFOS)
         return rsp
-
-    async def set_security_infos(self, security_infos: t.Dict[str, Any]) -> Status:
-        """Set network security information."""
-        rsp = await self.send_frame(
-            FrameId.SET_NWK_SECURITY_INFOS,
-            nwk_key=security_infos["nwk_key"],
-            nwk_frame_counter=security_infos["nwk_frame_counter"],
-            nwk_key_seq_num=security_infos["nwk_key_seq_num"]
-        )
-        return rsp["status"]
-
-    async def get_mac_address(self) -> t.uint64_t:
-        """Get the MAC address of the NCP."""
-        rsp = await self.send_frame(FrameId.GET_VALUE, value_id=BzspValueId.BZSP_VALUE_ID_MAC_ADDRESS)
-        return rsp["ieee"]
 
     async def set_mac_address(self, ieee_addr: t.uint64_t) -> Status:
         """Set the MAC address of the NCP."""
@@ -370,54 +330,6 @@ class Bzsp:
         else:
             raise ValueError(f"Unknown action '{action}' for whitelist management.")
         return rsp["status"]
-
-    async def get_aps_frame(self) -> None:
-        """Poll and process incoming APS frames."""
-        while True:
-            if self.network_state == NetworkState.OFFLINE:
-                continue
-
-            # Poll for APS Data Indication
-            rsp = await self.send_frame(FrameId.APS_DATA_INDICATION)
-            if rsp["device_state"] == NetworkState.INDICATION:
-                self._app.packet_received(
-                    t.ZigbeePacket(
-                        src=t.AddrModeAddress(
-                            addr_mode=rsp["src_addr_mode"],
-                            address=rsp["src_addr"]
-                        ),
-                        src_ep=rsp["src_ep"],
-                        dst=t.AddrModeAddress(
-                            addr_mode=rsp["dst_addr_mode"],
-                            address=rsp["dst_addr"]
-                        ),
-                        dst_ep=rsp["dst_ep"],
-                        tsn=None,
-                        profile_id=rsp["profile_id"],
-                        cluster_id=rsp["cluster_id"],
-                        data=t.SerializableBytes(rsp["asdu"]),
-                        lqi=rsp["lqi"],
-                        rssi=rsp["rssi"],
-                    )
-                )
-
-            # Poll for APS Data Confirmation
-            rsp = await self.send_frame(FrameId.APS_DATA_CONFIRM)
-            self._handle_device_state_changed(
-                Status.SUCCESS, device_state=rsp["device_state"]
-            )
-
-    # def _handle_device_state_changed(self, status: Status, device_state: DeviceState) -> None:
-    #     """Handle changes in device state."""
-    #     if device_state.network_state != self.network_state:
-    #         LOGGER.debug(
-    #             "Network device_state transition: %s -> %s",
-    #             self.network_state.name,
-    #             device_state.network_state.name,
-    #         )
-
-    #     self._device_state = device_state
-    
 
     async def get_bzsp_version(self) -> str:
         """Get the BZSP version."""

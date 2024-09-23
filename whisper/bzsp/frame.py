@@ -309,12 +309,4 @@ FRAME_SCHEMAS = {
             "message_tag": t.uint32_t,
         },  # Response schema
     ),
-    # FrameId.TRUST_CENTER_JOIN_CALLBACK: (
-    #     {},  # No request data
-    #     {
-    #         "eui64": t.EUI64,
-    #         "node_id": t.uint16_t,
-    #         "status": t.uint8_t,
-    #     },  # Response schema
-    # ),
 }
