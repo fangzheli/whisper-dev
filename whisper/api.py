@@ -134,20 +134,22 @@ class Bzsp:
 
         self._rx_seq = frame.seq & 0x0F  # Extract the Rx sequence from the received frame
 
+        try:
+            LOGGER.debug("frame received: %s", frame.payload)
+            params, _ = deserialize_dict(frame.payload, FRAME_SCHEMAS[frame.frame_id][1])
+            if frame.frame_id == FrameId.APS_DATA_CONFIRM or\
+                frame.frame_id == FrameId.APS_DATA_INDICATION or \
+                frame.frame_id == FrameId.DEVICE_JOIN_CALLBACK:
+                self._app.bzsp_callback_handler(frame.frame_id, params)
+                return
+        except Exception as exc:
+            LOGGER.warning("Failed to parse frame %s: %s", frame, exc)
+
         fut = None
         try:
             fut = self._awaiting[frame.frame_id][0]  # Match on Tx sequence
         except IndexError:
             LOGGER.warning("Unexpected frame received: %s", frame)
-            return
-
-        try:
-            LOGGER.debug("frame received: %s", frame.payload)
-            params, _ = deserialize_dict(frame.payload, FRAME_SCHEMAS[frame.frame_id][1])
-        except Exception as exc:
-            LOGGER.warning("Failed to parse frame %s: %s", frame, exc)
-            if fut is not None:
-                fut.set_exception(APIException(f"Failed to deserialize frame: {frame}"))
             return
 
         if fut is not None:
@@ -274,22 +276,32 @@ class Bzsp:
         """Get the network payload limit for a given destination."""
         rsp = await self.send_frame(FrameId.GET_NWK_PAYLOAD_LIMIT, dst_addr=dst_addr)
         return rsp["payload_limit"]
+    
+    async def get_node_id_by_EUI64(self, ieee_addr: t.uint64_t) -> t.uint16_t:
+        """Get the node ID by IEEE address."""
+        rsp = await self.send_frame(FrameId.GET_NODE_ID_BY_IEEE, ieee_addr=ieee_addr)
+        return rsp["node_id"]
 
+    async def get_EUI64_by_node_id(self, node_id: t.uint16_t) -> t.uint64_t:
+        """Get the IEEE address by node ID."""
+        rsp = await self.send_frame(FrameId.GET_IEEE_BY_NODE_ID, node_id=node_id)
+        return rsp["eui64"]
 
-    async def send_aps_data(self, aps_frame: BzspApsFrameHeader, asdu: bytes) -> Status:
+    async def send_aps_data(self, msg_type: t.uint8_t, dst_short_addr: t.uint16_t, profile_id: t.uint16_t, cluster_id: t.uint16_t, src_ep: t.uint8_t, dst_ep: t.uint8_t, tx_options: t.uint8_t, radius:t.uint8_t, asdu: bytes) -> Status:
         """Send an APS data request."""
         rsp = await self.send_frame(
             FrameId.SEND_APS_DATA,
-            msg_type=aps_frame.msg_type,
-            dst_short_addr=aps_frame.dst_short_addr,
-            profile_id=aps_frame.profile_id,
-            cluster_id=aps_frame.cluster_id,
-            src_ep=aps_frame.src_ep,
-            dst_ep=aps_frame.dst_ep,
-            tx_options=0x01,  # Default TX options (e.g., ACK required, use NWK key)
-            radius=0,
-            asdu_length=len(asdu),
-            asdu=asdu
+            msg_type=msg_type,
+            dst_short_addr=dst_short_addr,
+            profile_id=profile_id,
+            cluster_id=cluster_id,
+            src_ep=src_ep,
+            dst_ep=dst_ep,
+            tx_options=tx_options,
+            radius=radius,
+            message_tag= t.uint32_t(0),
+            payload_len= t.uint8_t(len(asdu)),
+            payload=asdu
         )
         return rsp["status"]
 

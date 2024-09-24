@@ -139,17 +139,15 @@ class Frame(t.Struct):
     frame_id: FrameId
     payload: Bytes
 
-class BzspApsFrameHeader(t.Struct):
-    profile_id: t.uint16_t
-    cluster_id: t.uint16_t
-    src_short_addr: t.uint16_t
-    dst_short_addr: t.uint16_t
-    src_ep: t.uint8_t
-    dst_ep: t.uint8_t
-    tx_options: t.uint8_t
-    msg_type: t.uint8_t
-    last_hop_rssi: t.uint8_t
-    last_hop_lqi: t.uint8_t
+class BzspTransmitOptions(t.bitmap8):
+    NONE = 0x00
+    SECURITY_ENABLED = 0x01
+    ACK_ENABLED = 0x04
+
+class BzspMsgType(t.uint8_t):
+    BZSP_MSG_TYPE_UNICAST = t.uint8_t(0x00)
+    BZSP_MSG_TYPE_MULTICAST = t.uint8_t(0x01)
+    BZSP_MSG_TYPE_BROADCAST = t.uint8_t(0x02)
 
 class BzspValueId(t.uint8_t):
     """

@@ -16,15 +16,10 @@ import zigpy.util
 import importlib.metadata
 
 from whisper.api import Bzsp
-from whisper.bzsp.types import NetworkState, Status
+from whisper.bzsp.types import NetworkState, Status, BzspTransmitOptions, BzspMsgType,FrameId
 import whisper.exception
 
 LOGGER = logging.getLogger(__name__)
-
-CHANGE_NETWORK_POLL_TIME = 1
-CHANGE_NETWORK_STATE_DELAY = 2
-DELAY_NEIGHBOUR_SCAN_S = 1500
-SEND_CONFIRM_TIMEOUT = 60
 
 
 class ControllerApplication(zigpy.application.ControllerApplication):
@@ -33,40 +28,22 @@ class ControllerApplication(zigpy.application.ControllerApplication):
         {zigpy.config.CONF_DEVICE_BAUDRATE: 2000000},
     ]
 
-    _watchdog_period = 600 * 0.75
-
     def __init__(self, config: dict[str, Any]):
         """Initialize instance."""
         super().__init__(config=zigpy.config.ZIGPY_SCHEMA(config))
         self._api = None
 
-        self._pending = zigpy.util.Requests()
-
-        self._delayed_neighbor_scan_task = None
-        self._reconnect_task = None
-
-        self._written_endpoints = set()
-
-    async def _watchdog_feed(self):
-        await self._api.set_watchdog_ttl(int(self._watchdog_period / 0.75))
-
     async def connect(self):
         api = Bzsp(self, self._config[zigpy.config.CONF_DEVICE])
-
         try:
             await api.connect()
         except Exception:
             api.close()
             raise
-
         self._api = api
-        self._written_endpoints.clear()
+
 
     async def disconnect(self):
-        if self._delayed_neighbor_scan_task is not None:
-            self._delayed_neighbor_scan_task.cancel()
-            self._delayed_neighbor_scan_task = None
-
         if self._api is not None:
             self._api.close()
             self._api = None
@@ -80,127 +57,22 @@ class ControllerApplication(zigpy.application.ControllerApplication):
     async def start_network(self):
         await self.register_endpoints()
         await self.load_network_info(load_devices=False)
-        await self._change_network_state(NetworkState.CONNECTED)
-
         coordinator = await BzspDevice.new(
             self,
             self.state.node_info.ieee,
             self.state.node_info.nwk,
             self.state.node_info.model,
         )
-
         self.devices[self.state.node_info.ieee] = coordinator
 
-        self._delayed_neighbor_scan_task = asyncio.create_task(
-            self._delayed_neighbour_scan()
-        )
-
-    async def _change_network_state(
-        self,
-        target_state: NetworkState,
-        *,
-        timeout: int = 10 * CHANGE_NETWORK_POLL_TIME,
-    ):
-        async def change_loop():
-            while True:
-                try:
-                    device_state = await self._api.get_device_state()
-                except asyncio.TimeoutError:
-                    LOGGER.debug("Failed to poll device state")
-                else:
-                    if NetworkState(device_state.network_state) == target_state:
-                        break
-
-                await asyncio.sleep(CHANGE_NETWORK_POLL_TIME)
-
-        await self._api.change_network_state(target_state)
-
-        try:
-            async with asyncio_timeout(timeout):
-                await change_loop()
-        except asyncio.TimeoutError:
-            if target_state != NetworkState.CONNECTED:
-                raise
-
-            raise zigpy.exceptions.FormationFailure("Network formation refused.")
-
     async def reset_network_info(self):
-        await self.form_network()
+        await self.leave_network()
 
     async def write_network_info(self, *, network_info, node_info):
-        try:
-            await self._api.set_nwk_frame_counter(network_info.network_key.tx_counter)
-        except whisper.bzsp.exception.CommandError as ex:
-            assert ex.status == Status.UNSUPPORTED
-            LOGGER.warning(
-                "Doesn't support writing the network frame counter with this firmware"
-            )
-
-        # if node_info.logical_type == zdo_t.LogicalType.Coordinator:
-        #     await self._api.set_aps_designed_coordinator(1)
-        # else:
-        #     await self._api.set_aps_designed_coordinator(0)
-
-        await self._api.set_nwk_address(node_info.nwk)
-
-        if node_info.ieee != t.EUI64.UNKNOWN:
-            await self._api.set_mac_address(node_info.ieee)
-            node_ieee = node_info.ieee
-        else:
-            ieee = await self._api.get_mac_address()
-            node_ieee = t.EUI64(ieee)
-
-        if network_info.channel is not None:
-            channel_mask = t.Channels.from_channel_list(
-                [network_info.channel]
-            )
-
-            if network_info.channel_mask and channel_mask != network_info.channel_mask:
-                LOGGER.warning(
-                    "Channel mask %s will be replaced with current logical channel %s",
-                    network_info.channel_mask,
-                    channel_mask,
-                )
-        else:
-            channel_mask = network_info.channel_mask
-
-        await self._api.set_channel_mask(channel_mask)
-        await self._api.set_use_predefined_nwk_panid(True)
-        await self._api.set_nwk_panid(network_info.pan_id)
-        await self._api.set_aps_extended_panid(network_info.extended_pan_id)
-        await self._api.set_nwk_update_id(network_info.nwk_update_id)
-
-        await self._api.set_network_key(
-            network_info.network_key.key,
+        LOGGER.warning(
+            "Doesn't support writing the network info into firmware"
         )
-
-        if network_info.network_key.seq != 0:
-            LOGGER.warning(
-                "Doesn't support non-zero network key sequence number: %s",
-                network_info.network_key.seq,
-            )
-
-        tc_link_key_partner_ieee = network_info.tc_link_key.partner_ieee
-
-        if tc_link_key_partner_ieee == t.EUI64.UNKNOWN:
-            tc_link_key_partner_ieee = node_ieee
-
-        await self._api.set_trust_center_address(
-            tc_link_key_partner_ieee,
-        )
-        await self._api.set_link_key(
-            tc_link_key_partner_ieee,
-            network_info.tc_link_key.key,
-        )
-
-        if network_info.security_level == 0x00:
-            await self._api.set_security_mode(t.SecurityMode.NO_SECURITY)
-        else:
-            await self._api.set_security_mode(t.SecurityMode.ONLY_TCLK)
-
-        await self._change_network_state(NetworkState.OFFLINE)
-        await asyncio.sleep(CHANGE_NETWORK_STATE_DELAY)
-        await self._change_network_state(NetworkState.CONNECTED)
+        pass
 
     async def load_network_info(self, *, load_devices=False):
         network_info = self.state.network_info
@@ -254,7 +126,6 @@ class ControllerApplication(zigpy.application.ControllerApplication):
         )
         network_info.tc_link_key.key = link_key['link_key']
 
-        # security mode
 
     async def force_remove(self, dev):
         """Forcibly remove device from NCP."""
@@ -284,78 +155,87 @@ class ControllerApplication(zigpy.application.ControllerApplication):
     async def send_packet(self, packet):
         LOGGER.debug("Sending packet: %r", packet)
 
-        force_relays = None
+        # Map packet.dst.addr_mode to msg_type and addresses
+        if packet.dst.addr_mode == t.AddrMode.NWK:
+            msg_type = BzspMsgType.BZSP_MSG_TYPE_UNICAST
+            dst_short_addr = packet.dst.address  # 16-bit network address
+        elif packet.dst.addr_mode == t.AddrMode.Group:
+            msg_type = BzspMsgType.BZSP_MSG_TYPE_MULTICAST
+            dst_short_addr = packet.dst.address  # 16-bit group address
+        elif packet.dst.addr_mode == t.AddrMode.Broadcast:
+            msg_type = BzspMsgType.BZSP_MSG_TYPE_BROADCAST
+            dst_short_addr = packet.dst.address  # 16-bit broadcast address
+        elif packet.dst.addr_mode == t.AddrMode.IEEE:
+            # Resolve EUI64 to network address (node ID)
+            eui64 = packet.dst.address  # Should be an instance of EUI64
+            dst_short_addr = await self._api.get_node_id_by_EUI64(eui64)
+            if dst_short_addr is None:
+                raise ValueError(f"Cannot resolve EUI64 address: {eui64}")
+            msg_type = BzspMsgType.BZSP_MSG_TYPE_UNICAST
+        else:
+            raise ValueError(f"Unsupported address mode: {packet.dst.addr_mode}")
 
-        dst_addr = packet.dst.address
-        addr_mode = packet.dst.addr_mode
-        if packet.dst.addr_mode != t.AddrMode.IEEE:
-            dst_addr = t.EUI64(
-                [
-                    packet.dst.address % 0x100,
-                    packet.dst.address >> 8,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                ]
-            )
-        if packet.dst.addr_mode == t.AddrMode.Broadcast:
-            addr_mode = t.AddrMode.Group
-
-        if packet.dst.addr_mode != t.AddrMode.IEEE:
-            src_addr = t.EUI64(
-                [
-                    packet.dst.address % 0x100,
-                    packet.dst.address >> 8,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                ]
-            )
-
-        if packet.source_route is not None:
-            force_relays = packet.source_route
-
-        tx_options = t.BzspTransmitOptions.NONE
+        # Set transmission options
+        tx_options = BzspTransmitOptions.NONE
 
         if t.TransmitOptions.ACK in packet.tx_options:
-            tx_options |= t.BzspTransmitOptions.ACK_ENABLED
+            tx_options |= BzspTransmitOptions.ACK_ENABLED
 
         if t.TransmitOptions.APS_Encryption in packet.tx_options:
-            tx_options |= t.BzspTransmitOptions.SECURITY_ENABLED
+            tx_options |= BzspTransmitOptions.SECURITY_ENABLED
+        
+        # Extract the payload (ASDU)
+        asdu = packet.data.serialize()
 
+        # Call the send_aps_data API
         async with self._limit_concurrency():
-            await self._api.aps_data_request(
-                dst_addr=dst_addr,
-                dst_ep=packet.dst_ep,
-                src_addr=src_addr,
+            await self._api.send_aps_data(
+                msg_type=msg_type,
+                dst_short_addr=dst_short_addr,
+                profile_id=packet.profile_id,
+                cluster_id=packet.cluster_id,
                 src_ep=packet.src_ep,
-                profile=packet.profile_id,
-                addr_mode=addr_mode,
-                cluster=packet.cluster_id,
-                sequence=packet.tsn,
-                options=tx_options,
-                radius=packet.radius or 0,
-                data=packet.data.serialize(),
-                relays=force_relays,
-                extended_timeout=packet.extended_timeout,
+                dst_ep=packet.dst_ep,
+                radius=packet.radius,
+                tx_options=tx_options,
+                asdu=asdu
             )
+
 
     async def permit_ncp(self, time_s=60):
         assert 0 <= time_s <= 254
         await self._api.permit_joining(time_s)
 
+    def bzsp_callback_handler(self, frame_id, response, lqi):
+            """Handle BZSP callbacks."""
+            LOGGER.debug("Callback handler invoked: %s", frame_id)
+            if frame_id == FrameId.APS_DATA_INDICATION:
+                # Handle incoming Zigbee APS data indication
+                self._handle_aps_data_indication(response)
+            elif frame_id == FrameId.DEVICE_JOIN_CALLBACK:
+                # Handle device join event
+                self._handle_device_join(response)
 
-    async def _delayed_neighbour_scan(self) -> None:
-        """Scan coordinator's neighbours."""
-        await asyncio.sleep(DELAY_NEIGHBOUR_SCAN_S)
-        coord = self.get_device(ieee=self.state.node_info.ieee)
-        await self.topology.scan(devices=[coord])
+    def _handle_aps_data_indication(self, response):
+        """Process APS data indication."""
+        packet = zigpy.types.ZigbeePacket(
+            src=response["src_addr"],
+            src_ep=response["src_ep"],
+            dst=response["dst_addr"],
+            dst_ep=response["dst_ep"],
+            profile_id=response["profile_id"],
+            cluster_id=response["cluster_id"],
+            data=response["asdu"],
+            lqi=response["lqi"]
+        )
+        self.packet_received(packet)
+
+    def _handle_device_join(self, response):
+        """Handle a device join callback."""
+        nwk = response["short_addr"]
+        ieee = zigpy.types.EUI64(response["ext_addr"])
+        LOGGER.info(f"Device joined: IEEE={ieee}, NWK={nwk}")
+        self.handle_join(nwk, ieee, 0)
 
 
 class BzspDevice(zigpy.device.Device):
