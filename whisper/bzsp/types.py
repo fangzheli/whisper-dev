@@ -145,9 +145,9 @@ class BzspTransmitOptions(t.bitmap8):
     ACK_ENABLED = 0x04
 
 class BzspMsgType(t.uint8_t):
-    BZSP_MSG_TYPE_UNICAST = t.uint8_t(0x00)
-    BZSP_MSG_TYPE_MULTICAST = t.uint8_t(0x01)
-    BZSP_MSG_TYPE_BROADCAST = t.uint8_t(0x02)
+    BZSP_MSG_TYPE_UNICAST = t.uint8_t(0x01)
+    BZSP_MSG_TYPE_MULTICAST = t.uint8_t(0x02)
+    BZSP_MSG_TYPE_BROADCAST = t.uint8_t(0x03)
 
 class BzspValueId(t.uint8_t):
     """

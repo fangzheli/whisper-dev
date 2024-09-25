@@ -54,6 +54,8 @@ class Bzsp:
         """Establish connection to the NCP."""
         assert self._uart is None
         self._uart = await whisper.uart.connect(self._config, self)
+        status = await self.network_init()
+        # TODO: add log
         self._device_state = NetworkState.CONNECTED
 
     def connection_lost(self, exc: Exception) -> None:
@@ -117,7 +119,7 @@ class Bzsp:
                 async with asyncio_timeout(ACK_TIMEOUT):
                     return await fut
             except asyncio.TimeoutError:
-                LOGGER.debug("No response to '%s' frame with seq %d", frame_id, self._tx_seq)
+                LOGGER.debug("No response to '%s' frame with seq %d, future: %s", frame_id, self._tx_seq, self._awaiting[frame.frame_id][0])
                 if attempt == RETRANSMISSION_LIMIT - 1:
                     raise CommandError(Status.TIMEOUT, f"Frame {frame_id} timed out")
             finally:
@@ -137,13 +139,16 @@ class Bzsp:
         try:
             LOGGER.debug("frame received: %s", frame.payload)
             params, _ = deserialize_dict(frame.payload, FRAME_SCHEMAS[frame.frame_id][1])
-            if frame.frame_id == FrameId.APS_DATA_CONFIRM or\
-                frame.frame_id == FrameId.APS_DATA_INDICATION or \
-                frame.frame_id == FrameId.DEVICE_JOIN_CALLBACK:
-                self._app.bzsp_callback_handler(frame.frame_id, params)
-                return
         except Exception as exc:
             LOGGER.warning("Failed to parse frame %s: %s", frame, exc)
+            return
+        if frame.frame_id == FrameId.APS_DATA_CONFIRM:
+            return
+        if frame.frame_id == FrameId.APS_DATA_INDICATION or \
+            frame.frame_id == FrameId.DEVICE_JOIN_CALLBACK:
+            self._app.bzsp_callback_handler(frame.frame_id, params)
+            return
+
 
         fut = None
         try:
@@ -152,8 +157,9 @@ class Bzsp:
             LOGGER.warning("Unexpected frame received: %s", frame)
             return
 
-        if fut is not None:
+        if fut is not None and not fut.done():
             fut.set_result(params)
+            # self._awaiting[frame.frame_id].remove(fut)
 
     async def network_init(self) -> Status:
         """Initialize the network."""
@@ -172,7 +178,7 @@ class Bzsp:
         rsp = await self.send_frame(FrameId.LEAVE_NETWORK)
         return rsp.get("status", Status.FAILURE)
 
-    async def permit_joining(self, duration: t.uint8_t = t.uint64_t(60)) -> Status:
+    async def permit_joining(self, duration: t.uint8_t = t.uint8_t(60)) -> Status:
         """Permit devices to join the network."""
         rsp = await self.send_frame(FrameId.PERMIT_JOINING, duration=duration)
         return rsp.get("status", Status.FAILURE)
@@ -252,8 +258,8 @@ class Bzsp:
     ) -> Status:
         """Add an endpoint to NCP."""
         
-        input_cluster_count = len(input_clusters)
-        output_cluster_count = len(output_clusters)
+        input_cluster_count = t.uint8_t(len(input_clusters))
+        output_cluster_count = t.uint8_t(len(output_clusters))
         
         # Send frame with the required fields and their values
         rsp = await self.send_frame(
@@ -303,7 +309,7 @@ class Bzsp:
             payload_len= t.uint8_t(len(asdu)),
             payload=asdu
         )
-        return rsp["status"]
+        return rsp.get("status", Status.FAILURE)
 
     async def get_security_infos(self) -> t.Dict[str, Any]:
         """Retrieve network security information."""

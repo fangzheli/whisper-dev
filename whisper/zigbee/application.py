@@ -16,7 +16,7 @@ import zigpy.util
 import importlib.metadata
 
 from whisper.api import Bzsp
-from whisper.bzsp.types import NetworkState, Status, BzspTransmitOptions, BzspMsgType,FrameId
+from whisper.bzsp.types import NetworkState, Status, BzspTransmitOptions, BzspMsgType, FrameId, Bytes
 import whisper.exception
 
 LOGGER = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class ControllerApplication(zigpy.application.ControllerApplication):
 
     def __init__(self, config: dict[str, Any]):
         """Initialize instance."""
-        super().__init__(config=zigpy.config.ZIGPY_SCHEMA(config))
+        super().__init__(config)
         self._api = None
 
     async def connect(self):
@@ -192,48 +192,74 @@ class ControllerApplication(zigpy.application.ControllerApplication):
             await self._api.send_aps_data(
                 msg_type=msg_type,
                 dst_short_addr=dst_short_addr,
-                profile_id=packet.profile_id,
-                cluster_id=packet.cluster_id,
-                src_ep=packet.src_ep,
-                dst_ep=packet.dst_ep,
-                radius=packet.radius,
+                profile_id=t.uint16_t(packet.profile_id),
+                cluster_id=t.uint16_t(packet.cluster_id),
+                src_ep=t.uint8_t(packet.src_ep),
+                dst_ep=t.uint8_t(packet.dst_ep),
+                radius=t.uint8_t(packet.radius),
                 tx_options=tx_options,
-                asdu=asdu
+                asdu=Bytes(asdu)
             )
-
 
     async def permit_ncp(self, time_s=60):
         assert 0 <= time_s <= 254
-        await self._api.permit_joining(time_s)
+        await self._api.permit_joining(t.uint8_t(time_s))
 
-    def bzsp_callback_handler(self, frame_id, response, lqi):
+    def bzsp_callback_handler(self, frame_id, response):
             """Handle BZSP callbacks."""
-            LOGGER.debug("Callback handler invoked: %s", frame_id)
+            LOGGER.debug("Callback handler invoked: %s: %s", frame_id, response)
             if frame_id == FrameId.APS_DATA_INDICATION:
                 # Handle incoming Zigbee APS data indication
                 self._handle_aps_data_indication(response)
             elif frame_id == FrameId.DEVICE_JOIN_CALLBACK:
                 # Handle device join event
                 self._handle_device_join(response)
+            else:
+                print("aps confirm, %s, %s", frame_id, response)
 
     def _handle_aps_data_indication(self, response):
         """Process APS data indication."""
-        packet = zigpy.types.ZigbeePacket(
-            src=response["src_addr"],
+        LOGGER.debug("APS data indication handler invoked: %s", response)
+
+        # Create source and destination addresses
+        src_address = t.AddrModeAddress(
+            addr_mode=t.AddrMode.NWK,
+            address=response["src_short_addr"]
+        )
+
+        dst_address = t.AddrModeAddress(
+            addr_mode=self._get_addrmode_by_msg_type(response["msg_type"]),
+            address=response["dst_short_addr"]
+        )
+        
+
+        # Create the ZigbeePacket instance
+        packet = t.ZigbeePacket(
+            src=src_address,
             src_ep=response["src_ep"],
-            dst=response["dst_addr"],
+            dst=dst_address,
             dst_ep=response["dst_ep"],
             profile_id=response["profile_id"],
             cluster_id=response["cluster_id"],
-            data=response["asdu"],
-            lqi=response["lqi"]
+            data=t.SerializableBytes(response["message"]),
+            lqi=response["lqi"]  # Optional field
         )
         self.packet_received(packet)
 
+    def _get_addrmode_by_msg_type(self, msgType):
+        if msgType == BzspMsgType.BZSP_MSG_TYPE_BROADCAST:
+            return t.AddrMode.Broadcast
+        elif msgType == BzspMsgType.BZSP_MSG_TYPE_MULTICAST:
+            return t.AddrMode.Group
+        else:
+            return t.AddrMode.NWK
+
+
     def _handle_device_join(self, response):
         """Handle a device join callback."""
+        LOGGER.debug("Device join handler invoked: %s", response)
         nwk = response["short_addr"]
-        ieee = zigpy.types.EUI64(response["ext_addr"])
+        ieee = t.EUI64(response["ext_addr"])
         LOGGER.info(f"Device joined: IEEE={ieee}, NWK={nwk}")
         self.handle_join(nwk, ieee, 0)
 
