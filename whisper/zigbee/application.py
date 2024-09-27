@@ -64,6 +64,10 @@ class ControllerApplication(zigpy.application.ControllerApplication):
             self.state.node_info.model,
         )
         self.devices[self.state.node_info.ieee] = coordinator
+        # dev = self.add_device(
+        #     ieee=self.state.node_info.ieee, nwk=self.state.node_info.nwk
+        # )
+        # await dev.schedule_initialize()
 
     async def reset_network_info(self):
         await self.leave_network()
@@ -100,9 +104,10 @@ class ControllerApplication(zigpy.application.ControllerApplication):
             }
         }
 
-        network_info.pan_id = nwk_info["pan_id"]
-        network_info.extended_pan_id = nwk_info["ext_pan_id"]
-
+        network_info.pan_id = t.PanId(nwk_info["pan_id"])
+        network_info.extended_pan_id = t.ExtendedPanId.deserialize(
+            t.uint64_t(nwk_info["ext_pan_id"]).serialize()
+        )[0]
         network_info.channel = nwk_info["channel"]
         network_info.channel_mask = t.Channels(nwk_info["channel_mask"])
         network_info.nwk_update_id = nwk_info["nwk_update_id"]
@@ -258,8 +263,8 @@ class ControllerApplication(zigpy.application.ControllerApplication):
     def _handle_device_join(self, response):
         """Handle a device join callback."""
         LOGGER.debug("Device join handler invoked: %s", response)
-        nwk = response["short_addr"]
-        ieee = t.EUI64(response["ext_addr"])
+        nwk = response["node_id"]
+        ieee = t.EUI64(response["eui64"])
         LOGGER.info(f"Device joined: IEEE={ieee}, NWK={nwk}")
         self.handle_join(nwk, ieee, 0)
 
