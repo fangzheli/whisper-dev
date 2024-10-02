@@ -13,11 +13,11 @@ FRAME_SCHEMAS = {
     ),
     FrameId.RESET: (
         {},  # No request data
-        {"status": Status},  # Response schema
+        {},  # Response schema
     ),
     FrameId.RESET_ACK: (
         {},  # No request data
-        {},  # No response data
+        {"reset_reason": t.uint8_t},
     ),
 
     # Value Frames

@@ -1,46 +1,5 @@
 import zigpy.types as t
 
-class DeviceType(t.enum8):
-    COORDINATOR = 0
-    ROUTER = 1
-    END_DEVICE = 2
-
-class Status(t.enum8):
-    SUCCESS = 0
-    FAILURE = 1
-    INVALID_VALUE = 2
-    TIMEOUT = 3
-    UNSUPPORTED = 4
-    ERROR = 5
-    NO_NETWORK = 6
-    BUSY = 7
-
-class FirmwareVersion(t.Struct, t.uint32_t):
-    reserved: t.uint8_t
-    patch: t.uint8_t
-    minor: t.uint8_t
-    major: t.uint8_t
-
-class NetworkState(t.enum8):
-    OFFLINE = 0
-    JOINING = 1
-    CONNECTED = 2
-    LEAVING = 3
-    CONFIRM = 4
-    INDICATION = 5
-
-class DeviceState(t.Struct):
-    network_state: NetworkState
-
-class SecurityMode(t.enum8):
-    NO_SECURITY = 0x00
-    PRECONFIGURED_NETWORK_KEY = 0x01
-    NETWORK_KEY_FROM_TC = 0x02
-    ONLY_TCLK = 0x03
-
-class TXStatus(t.enum8):
-    SUCCESS = 0x00
-
 class Bytes(bytes):
     def serialize(self):
         return self
@@ -48,18 +7,6 @@ class Bytes(bytes):
     @classmethod
     def deserialize(cls, data):
         return cls(data), b""
-    
-def deserialize_dict(data, schema):
-    result = {}
-    for name, type_ in schema.items():
-        try:
-            result[name], data = type_.deserialize(data)
-        except ValueError:
-            if data:
-                raise
-
-            result[name] = None
-    return result, data
 
 class FrameId(t.uint16_t):
     """Frame IDs based on BZSP documentation."""
@@ -149,6 +96,21 @@ class BzspMsgType(t.uint8_t):
     BZSP_MSG_TYPE_MULTICAST = t.uint8_t(0x02)
     BZSP_MSG_TYPE_BROADCAST = t.uint8_t(0x03)
 
+class Status(t.enum8):
+    SUCCESS = 0
+    FAILURE = 1
+    TIMEOUT = 2
+
+class FirmwareVersion(t.Struct, t.uint32_t):
+    reserved: t.uint8_t
+    patch: t.uint8_t
+    minor: t.uint8_t
+    major: t.uint8_t
+
+class NetworkState(t.enum8):
+    OFFLINE = 0
+    CONNECTED = 1
+
 class BzspValueId(t.uint8_t):
     """
     BZSP Value ID enumeration.
@@ -187,6 +149,18 @@ class BzspValueId(t.uint8_t):
     # MAC address of NCP
     BZSP_VALUE_ID_MAC_ADDRESS = t.uint8_t(0x20)
     BZSP_VALUE_ID_APP_VERSION = t.uint8_t(0x21)
+    
+def deserialize_dict(data, schema):
+    result = {}
+    for name, type_ in schema.items():
+        try:
+            result[name], data = type_.deserialize(data)
+        except ValueError:
+            if data:
+                raise
+
+            result[name] = None
+    return result, data
 
 
 

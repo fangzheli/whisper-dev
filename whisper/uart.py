@@ -2,6 +2,7 @@ import asyncio
 import binascii
 import logging
 from typing import Callable, Dict
+from whisper.bzsp.types import FrameId
 
 import zigpy.config
 import zigpy.serial
@@ -50,6 +51,7 @@ class BzspUartGateway(asyncio.Protocol):
     STOP_BYTE = b"\x4C"
     ESCAPE_BYTE = b"\x07"
     ESCAPE_MASK = 0x10
+    FRAME_CTRL_DEBUG_MODE = 0x80
 
     def __init__(self, api, connected_future=None):
         """Initialize the UART gateway for BZSP."""
@@ -83,10 +85,10 @@ class BzspUartGateway(asyncio.Protocol):
 
     def send_ack(self, rx_frame):
         """send an ACK frame."""
-        debug = 0x80 if rx_frame[0] & 0x80 else 0x00
+        debug = self.FRAME_CTRL_DEBUG_MODE if rx_frame[0] & self.FRAME_CTRL_DEBUG_MODE else 0x00
         tx_seq = rx_frame[1] & 0x07
         rx_seq = tx_seq << 4
-        ack_frame = bytes([debug]) + bytes([rx_seq]) + b"\x01" + b"\x00"
+        ack_frame = bytes([debug]) + bytes([rx_seq]) + FrameId.ACK.to_bytes(2, 'little')
         LOGGER.debug("Sending ACK for frame %s", ack_frame)
         self.send(ack_frame)
 

@@ -38,6 +38,7 @@ class ControllerApplication(zigpy.application.ControllerApplication):
         try:
             await api.connect()
         except Exception:
+            await api.reset()
             api.close()
             raise
         self._api = api

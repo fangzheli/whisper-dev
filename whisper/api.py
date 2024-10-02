@@ -8,10 +8,9 @@ from typing import Any, Callable
 
 from zigpy.config import CONF_DEVICE_PATH
 import zigpy.types as t
-from zigpy.zdo.types import SimpleDescriptor
 
 from whisper.exception import APIException, CommandError, MismatchedResponseError
-from whisper.bzsp.types import * #Bytes, DeviceAddrMode, BzspTransmitOptions, list_replace
+from whisper.bzsp.types import *
 import whisper.uart
 from whisper.bzsp.frame import *
 from async_timeout import timeout as asyncio_timeout
@@ -54,8 +53,12 @@ class Bzsp:
         """Establish connection to the NCP."""
         assert self._uart is None
         self._uart = await whisper.uart.connect(self._config, self)
+        await self.reset()
+        LOGGER.debug("Reset the NCP")
+        await asyncio.sleep(3)
+        LOGGER.debug("After wait for three seconds")
         status = await self.network_init()
-        # TODO: add log
+        LOGGER.info("Connected to NCP")
         self._device_state = NetworkState.CONNECTED
 
     def connection_lost(self, exc: Exception) -> None:
@@ -106,29 +109,38 @@ class Bzsp:
                     frame_id=frame_id,
                     payload=b"".join(payload),
                 )
-            print("Frame is", frame)
 
             self._uart.send(frame.serialize())
             self._tx_seq = (self._tx_seq + 1) % 16  # Increment and wrap around the Tx sequence
 
+            if frame_id == FrameId.RESET:
+                return
+            
             fut = asyncio.Future()
+            LOGGER.debug("Creating future for frame_id=%s, seq=%d, future=%s", frame_id, self._tx_seq, fut)
             self._awaiting[frame_id].append(fut)
-
-            #TODO here
+            
             try:
                 async with asyncio_timeout(ACK_TIMEOUT):
-                    return await fut
+                    LOGGER.debug("Awaiting response for frame_id=%s, seq=%d", frame_id, self._tx_seq)
+                    result = await fut
+                    LOGGER.debug("Received response for frame_id=%s, seq=%d, result=%s", frame_id, self._tx_seq, result)
+                    return result
             except asyncio.TimeoutError:
-                LOGGER.debug("No response to '%s' frame with seq %d, future: %s", frame_id, self._tx_seq, self._awaiting[frame.frame_id][0])
+                LOGGER.warning("Timeout waiting for frame_id=%s, seq=%d, future=%s", frame_id, self._tx_seq, fut)
                 if attempt == RETRANSMISSION_LIMIT - 1:
                     raise CommandError(Status.TIMEOUT, f"Frame {frame_id} timed out")
             finally:
-                self._awaiting[frame_id].remove(fut)
+                if fut in self._awaiting[frame_id]:
+                    self._awaiting[frame_id].remove(fut)
+                    LOGGER.debug("Removed future for frame_id=%s, seq=%d, future=%s", frame_id, self._tx_seq, fut)
+                else:
+                    LOGGER.warning("Future already removed for frame_id=%s, seq=%d, future=%s", frame_id, self._tx_seq, fut)
 
     def data_received(self, data: bytes) -> None:
         """Handle data received from the NCP."""
         frame, _ = Frame.deserialize(data)
-        LOGGER.debug("frame received: %s", frame)
+        LOGGER.debug("Frame received: %s", frame)
 
         if frame.frame_id not in FRAME_SCHEMAS:
             LOGGER.warning("Unknown frame received: %s", frame)
@@ -137,33 +149,34 @@ class Bzsp:
         self._rx_seq = frame.seq & 0x0F  # Extract the Rx sequence from the received frame
 
         try:
-            LOGGER.debug("frame received: %s", frame.payload)
+            LOGGER.debug("Deserializing payload for frame_id=%s", frame.frame_id)
             params, _ = deserialize_dict(frame.payload, FRAME_SCHEMAS[frame.frame_id][1])
         except Exception as exc:
             LOGGER.warning("Failed to parse frame %s: %s", frame, exc)
             return
-        if frame.frame_id == FrameId.APS_DATA_CONFIRM:
+        
+        if frame.frame_id in [FrameId.APS_DATA_CONFIRM, FrameId.RESET_ACK]:
             return
-        if frame.frame_id == FrameId.APS_DATA_INDICATION or \
-            frame.frame_id == FrameId.DEVICE_JOIN_CALLBACK:
+        if frame.frame_id in [FrameId.APS_DATA_INDICATION, FrameId.DEVICE_JOIN_CALLBACK]:
             self._app.bzsp_callback_handler(frame.frame_id, params)
             return
-
 
         fut = None
         try:
             fut = self._awaiting[frame.frame_id][0]  # Match on Tx sequence
+            LOGGER.debug("Matched future for frame_id=%s, seq=%d, future=%s", frame.frame_id, self._rx_seq, fut)
         except IndexError:
-            LOGGER.warning("Unexpected frame received: %s", frame)
+            LOGGER.warning("Unsolicited frame received: %s", frame)
             return
 
         if fut is not None and not fut.done():
             fut.set_result(params)
-            # self._awaiting[frame.frame_id].remove(fut)
+            LOGGER.debug("Set result for future frame_id=%s, seq=%d, future=%s", frame.frame_id, self._rx_seq, fut)
+        else:
+            LOGGER.warning("Future already completed or canceled for frame_id=%s, seq=%d, future=%s", frame.frame_id, self._rx_seq, fut)
 
     async def network_init(self) -> Status:
         """Initialize the network."""
-        # await self.send_frame(FrameId.RESET)
         rsp = await self.send_frame(FrameId.NETWORK_INIT)
         logging.debug("Network init response: %s", rsp)
         return rsp.get("status", Status.FAILURE)
@@ -182,6 +195,9 @@ class Bzsp:
         """Permit devices to join the network."""
         rsp = await self.send_frame(FrameId.PERMIT_JOINING, duration=duration)
         return rsp.get("status", Status.FAILURE)
+    
+    async def reset(self) -> Status:
+        await self.send_frame(FrameId.RESET)
 
     def close(self):
         """Close the connection to the NCP."""
@@ -430,7 +446,6 @@ class Bzsp:
     async def get_app_version(self) -> str:
         """Get the application version of the NCP."""
         rsp = await self.get_value(BzspValueId.BZSP_VALUE_ID_APP_VERSION)
-        print(rsp)
         if rsp["status"] == Status.SUCCESS:
             return rsp["value"].decode("utf-8")
         raise Exception(f"Failed to get app version: {rsp['status']}")
